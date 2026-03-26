@@ -5,17 +5,6 @@ data "terraform_remote_state" "rds" {
   }
 }
 
-data "aws_vpc" "default" {
-  default = true
-}
-
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 resource "aws_ecr_repository" "app" {
   name                 = var.app_ecr_repo_name
   image_tag_mutability = "MUTABLE"
@@ -23,7 +12,7 @@ resource "aws_ecr_repository" "app" {
 
 resource "aws_security_group" "alb" {
   name   = "webapp-alb-sg"
-  vpc_id = data.aws_vpc.default.id
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port   = 80
     to_port     = 80
@@ -40,7 +29,7 @@ resource "aws_security_group" "alb" {
 
 resource "aws_security_group" "ecs" {
   name   = "webapp-ecs-sg"
-  vpc_id = data.aws_vpc.default.id
+  vpc_id = aws_vpc.main.id
   ingress {
     from_port       = var.app_container_port
     to_port         = var.app_container_port
@@ -60,14 +49,17 @@ resource "aws_lb" "app" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
-  subnets            = data.aws_subnets.default.ids
+  subnets = [
+    aws_subnet.public_a.id,
+    aws_subnet.public_b.id
+  ]
 }
 
 resource "aws_lb_target_group" "app" {
   name     = "webapp-tg"
   port     = var.app_container_port
   protocol = "HTTP"
-  vpc_id   = data.aws_vpc.default.id
+  vpc_id   = aws_vpc.main.id
   health_check {
     path     = "/"
     protocol = "HTTP"
@@ -91,9 +83,9 @@ resource "aws_iam_role" "ecs_exec" {
     Version = "2012-10-17",
     Statement = [
       {
-        Effect = "Allow",
+        Effect    = "Allow",
         Principal = { Service = "ecs-tasks.amazonaws.com" },
-        Action = "sts:AssumeRole"
+        Action    = "sts:AssumeRole"
       }
     ]
   })
@@ -110,9 +102,9 @@ resource "aws_iam_role" "ecs_task" {
     Version = "2012-10-17",
     Statement = [
       {
-        Effect = "Allow",
+        Effect    = "Allow",
         Principal = { Service = "ecs-tasks.amazonaws.com" },
-        Action = "sts:AssumeRole"
+        Action    = "sts:AssumeRole"
       }
     ]
   })
@@ -177,8 +169,11 @@ resource "aws_ecs_service" "app" {
   desired_count   = var.desired_count
   launch_type     = "FARGATE"
   network_configuration {
-    subnets         = data.aws_subnets.default.ids
-    security_groups = [aws_security_group.ecs.id]
+    subnets = [
+      aws_subnet.public_a.id,
+      aws_subnet.public_b.id
+    ]
+    security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
   }
   load_balancer {
